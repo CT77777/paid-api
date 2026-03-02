@@ -38,40 +38,59 @@ async function runAgent() {
       `💰 支付詳情: ${paymentChallenge.amount} units of ${paymentChallenge.asset}`,
     );
 
-    // 3. 準備 EIP-712 簽名資料 (這是 x402 要求的格式)
-    // 註：實際格式需參考 ERC-8004/x402 具體定義的 Domain 與 Types
+    // 3. 準備 ERC-3009 TransferWithAuthorization 的 EIP-712 簽名資料
+    // ERC-3009 允許透過簽名授權第三方代為轉帳 (gasless transfer)
+    const tokenAddress = paymentChallenge.asset.split(':').pop() as string;
+    console.log('🔗 Agent: 目標 Token 合約地址:', tokenAddress);
+
+    // EIP-712 Domain - 需要使用 Token 合約的資訊
     const domain = {
-      name: 'x402-Payment',
-      version: '1',
+      name: 'USD Coin', // USDC token name (Base Sepolia)
+      version: '2', // USDC version
       chainId: 84532, // Base Sepolia
-      verifyingContract: paymentChallenge.asset.split(':').pop(),
+      verifyingContract: tokenAddress, // Token 合約地址
     };
 
+    // ERC-3009 TransferWithAuthorization types
     const types = {
-      Payment: [
-        { name: 'recipient', type: 'address' },
-        { name: 'amount', type: 'uint256' },
-        { name: 'asset', type: 'address' },
-        { name: 'nonce', type: 'uint256' },
+      TransferWithAuthorization: [
+        { name: 'from', type: 'address' },
+        { name: 'to', type: 'address' },
+        { name: 'value', type: 'uint256' },
+        { name: 'validAfter', type: 'uint256' },
+        { name: 'validBefore', type: 'uint256' },
+        { name: 'nonce', type: 'bytes32' },
       ],
     };
 
+    // 生成隨機 nonce (bytes32)
+    const nonce = ethers.hexlify(ethers.randomBytes(32));
+
+    // 設定有效時間範圍
+    const now = Math.floor(Date.now() / 1000);
+    const validAfter = now - 60; // 1 分鐘前開始有效
+    const validBefore = now + 3600; // 1 小時後過期
+
     const value = {
-      recipient: paymentChallenge.recipient,
-      amount: paymentChallenge.amount,
-      asset: paymentChallenge.asset.split(':').pop(), // 提取 ERC20 地址
-      nonce: Math.floor(Math.random() * 1000000), // 實際應由 Server 或合約提供
+      from: wallet.address, // 付款人 (Agent)
+      to: paymentChallenge.recipient, // 收款人 (Server)
+      value: paymentChallenge.amount, // 金額
+      validAfter: validAfter,
+      validBefore: validBefore,
+      nonce: nonce,
     };
 
     // 4. 調用錢包進行簽名
     console.log('🖋️  Agent: 正在進行離線簽名授權...');
     const signature = await wallet.signTypedData(domain, types, value);
+    console.log('🔏 Agent: 簽名完成，簽章:', signature);
 
     // 5. 第二次嘗試請求，帶上 payment-signature
     console.log('🚀 Agent: 帶上證明重新發送請求...');
     response = await fetch(SERVER_URL, {
       headers: {
         'payment-signature': signature,
+        'payment-authorization': JSON.stringify(value),
         'Content-Type': 'application/json',
       },
     });
