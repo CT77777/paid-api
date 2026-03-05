@@ -15,6 +15,15 @@ interface x402VerifyResponse {
   invalidMessage?: string; // 如果簽章無效，提供失敗訊息
 }
 
+interface x402SettleResponse {
+  success: boolean; // true 表示處理成功，false 表示失敗
+  payer: string; // 付款人地址
+  transaction?: string; // 交易哈希
+  network?: string; // 網路名稱
+  errorReason?: string; // 如果失敗，提供錯誤代碼
+  errorMessage?: string; // 如果失敗，提供錯誤訊息
+}
+
 interface paymentAuthorization {
   from: string; // 付款人 (Agent)
   to: string; // 收款人 (Server)
@@ -89,13 +98,25 @@ export class X402PaymentGuard implements CanActivate {
         HttpStatus.FORBIDDEN,
       );
     }
+    // 送出處理簽章的鏈上交易，並等待交易完成
+    const paymentProcessedResult = await this.processPayment(
+      signature,
+      authorization,
+    );
+    if (!paymentProcessedResult) {
+      throw new HttpException(
+        'Payment Processing Failed',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
 
-    return true;
+    return paymentProcessedResult;
   }
 
   /**
    * 向 Facilitator 驗證支付簽章
    * @param signature 支付簽章
+   * @param authorization 支付授權資訊
    */
   private async verifyPayment(
     signature: string,
@@ -108,6 +129,10 @@ export class X402PaymentGuard implements CanActivate {
         'FACILITATOR_URL',
         '',
       );
+      const assetAddress = this.configService
+        .get<string>('ASSET', '')
+        .split(':')
+        .pop() as string;
 
       const response = await fetch(`${facilitatorUrl}/verify`, {
         method: 'POST',
@@ -120,34 +145,22 @@ export class X402PaymentGuard implements CanActivate {
             network: 'base-sepolia',
             payload: {
               signature, // Client 產生的 EIP-712 簽名
-              authorization: {
-                from: authorization.from,
-                to: authorization.to,
-                value: authorization.value,
-                validAfter: authorization.validAfter,
-                validBefore: authorization.validBefore,
-                nonce: authorization.nonce,
-              },
+              authorization,
             },
           },
           // 2. paymentRequirements: 你(Server)當初在 402 Header 中定義的要求
           paymentRequirements: {
             scheme: 'exact',
             network: 'base-sepolia',
-            maxAmountRequired: '1000000',
+            maxAmountRequired: '200000',
             resource: 'http://localhost:3000/secret-data',
             description: 'Premium API access for data analysis',
             mimeType: 'application/json',
-            payTo: '0xAbCDefA067FF1201719867f10e497dEEAc78CC67',
+            payTo: authorization.to,
             maxTimeoutSeconds: 300,
-            asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+            asset: assetAddress,
             outputSchema: { data: 'string' },
-            extra: { name: 'USD Coin', version: '2' },
-            // amount: '1000000', // 字串格式，例如 "100000"
-            // asset:
-            //   'eip155:84532:erc20:0x036CbD53842c5426634e7929541eC2318f3dCF7e', // CAIP-2 格式，例如 "eip155:8453:erc20:0x..."
-            // recipient: '0xAbCDefA067FF1201719867f10e497dEEAc78CC67', // 收款地址
-            // chainId: 'eip155:84532', // 建議使用 CAIP-2 格式字串
+            extra: { name: 'USDC', version: '2' },
           },
         }),
       });
@@ -157,10 +170,75 @@ export class X402PaymentGuard implements CanActivate {
       console.log('Facilitator 驗證結果:', result);
 
       return result.isValid;
-
-      // return true; // 暫時模擬驗證成功
     } catch (error) {
       console.error('Payment verification failed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 向 Facilitator 處理支付簽章
+   * @param signature 支付簽章
+   * @param authorization 支付授權資訊
+   */
+  private async processPayment(
+    signature: string,
+    authorization: paymentAuthorization,
+  ): Promise<boolean> {
+    try {
+      // 取得 facilitator URL
+      const facilitatorUrl = this.configService.get<string>(
+        'FACILITATOR_URL',
+        '',
+      );
+      const assetAddress = this.configService
+        .get<string>('ASSET', '')
+        .split(':')
+        .pop() as string;
+
+      // 向 facilitator 的 /settle 端點發送請求，請求處理支付簽章並完成交易
+      const response = await fetch(`${facilitatorUrl}/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          x402Version: 1,
+          paymentPayload: {
+            x402Version: 1,
+            scheme: 'exact',
+            network: 'base-sepolia',
+            payload: {
+              signature,
+              authorization,
+            },
+          },
+          paymentRequirements: {
+            scheme: 'exact',
+            network: 'base-sepolia',
+            maxAmountRequired: '200000',
+            resource: 'http://localhost:3000/secret-data',
+            description: 'Premium API access for data analysis',
+            mimeType: 'application/json',
+            payTo: authorization.to,
+            maxTimeoutSeconds: 300,
+            asset: assetAddress,
+            outputSchema: { data: 'string' },
+            extra: { name: 'USDC', version: '2' },
+          },
+        }),
+      });
+      console.log('Facilitator 處理回應:', response);
+
+      const result = (await response.json()) as x402SettleResponse;
+      console.log('Facilitator 處理結果:', result);
+
+      if (!result.success) {
+        console.error('Payment processing failed:', result.errorReason);
+        return false;
+      }
+
+      return result.success;
+    } catch (error) {
+      console.error('Payment processing failed:', error);
       return false;
     }
   }

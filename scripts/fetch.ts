@@ -40,15 +40,16 @@ async function runAgent() {
 
     // 3. 準備 ERC-3009 TransferWithAuthorization 的 EIP-712 簽名資料
     // ERC-3009 允許透過簽名授權第三方代為轉帳 (gasless transfer)
-    const tokenAddress = paymentChallenge.asset.split(':').pop() as string;
-    console.log('🔗 Agent: 目標 Token 合約地址:', tokenAddress);
+    const assetInfo = paymentChallenge.asset.split(':');
+    console.log('🔗 Agent: 目標 Chain ID:', assetInfo[1]);
+    console.log('🔗 Agent: 目標 Token 合約地址:', assetInfo[2]);
 
     // EIP-712 Domain - 需要使用 Token 合約的資訊
     const domain = {
-      name: 'USD Coin', // USDC token name (Base Sepolia)
+      name: 'USDC', // USDC token name (Base Sepolia)
       version: '2', // USDC version
-      chainId: 84532, // Base Sepolia
-      verifyingContract: tokenAddress, // Token 合約地址
+      chainId: assetInfo[1], // Base Sepolia
+      verifyingContract: assetInfo[2], // Token 合約地址
     };
 
     // ERC-3009 TransferWithAuthorization types
@@ -83,7 +84,11 @@ async function runAgent() {
     // 4. 調用錢包進行簽名
     console.log('🖋️  Agent: 正在進行離線簽名授權...');
     const signature = await wallet.signTypedData(domain, types, value);
+    const sig = ethers.Signature.from(signature);
     console.log('🔏 Agent: 簽名完成，簽章:', signature);
+    console.log('v:', sig.v);
+    console.log('r:', sig.r);
+    console.log('s:', sig.s);
 
     // 5. 第二次嘗試請求，帶上 payment-signature
     console.log('🚀 Agent: 帶上證明重新發送請求...');
