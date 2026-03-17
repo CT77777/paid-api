@@ -44,6 +44,13 @@ $ pnpm run start:dev
 $ pnpm run start:prod
 ```
 
+## Environment variables
+
+```bash
+# Comma-separated wallet blacklist. These payers will be rejected with 403.
+BLACKLISTED_ADDRESSES=0xabc...,0xdef...
+```
+
 ## Run tests
 
 ```bash
