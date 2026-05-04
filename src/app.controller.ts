@@ -1,5 +1,5 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
-import { AppService } from './app.service';
+import { AppService, HealthStatus, ReadyStatus } from './app.service';
 import { X402PaymentGuard } from './guards/x402-payment.guard';
 
 @Controller()
@@ -9,6 +9,16 @@ export class AppController {
   @Get()
   getHello(): string {
     return this.appService.getHello();
+  }
+
+  @Get('/health')
+  getHealth(): HealthStatus {
+    return this.appService.getHealth();
+  }
+
+  @Get('/ready')
+  getReady(): ReadyStatus {
+    return this.appService.getReadiness();
   }
 
   @Get('/secret-data')
