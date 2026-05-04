@@ -64,6 +64,8 @@ export class X402PaymentGuard implements CanActivate {
       }
     }
 
+    this.assertAddressIsAllowed(authorization?.from);
+
     const signature = Array.isArray(rawSignature)
       ? rawSignature[0]
       : rawSignature;
@@ -111,6 +113,33 @@ export class X402PaymentGuard implements CanActivate {
     }
 
     return paymentProcessedResult;
+  }
+
+  private assertAddressIsAllowed(address?: string): void {
+    if (!address) {
+      return;
+    }
+
+    const blacklist = this.getBlacklistedAddresses();
+    if (!blacklist.has(address.toLowerCase())) {
+      return;
+    }
+
+    throw new HttpException(
+      'Address is blocked from payment or access',
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  private getBlacklistedAddresses(): Set<string> {
+    const rawList = this.configService.get<string>('BLACKLISTED_ADDRESSES', '');
+
+    return new Set(
+      rawList
+        .split(',')
+        .map((address) => address.trim().toLowerCase())
+        .filter(Boolean),
+    );
   }
 
   /**
